@@ -21,6 +21,9 @@ const session = require('express-session');
 const mustacheExpress = require('mustache-express');
 const path = require('path');
 const { ExpressOIDC } = require('@okta/oidc-middleware');
+const LokiStore = require('connect-loki')(session);
+const uid = require('uid-safe');
+
 
 const templateDir = path.join(__dirname, '..', 'common', 'views');
 const frontendDir = path.join(__dirname, '..', 'common', 'assets');
@@ -38,10 +41,23 @@ module.exports = function SampleWebServer(sampleConfig, extraOidcOptions, homePa
 
   const app = express();
 
+  function parseSid(jwt) {
+    const body = jwt.split('.')[1];
+    const base64DecodedText = Buffer.from(body, 'base64').toString('utf8');
+    const tokenObject = JSON.parse(base64DecodedText);
+    return tokenObject.sid;
+  }
+
   app.use(session({
+    store: new LokiStore(),
     secret: 'this-should-be-very-random',
-    resave: true,
-    saveUninitialized: false
+    resave: false,
+    saveUninitialized: false,
+    genid: function (req) {
+      if (req.userContext) {
+        return parseSid(req.userContext.tokens.id_token);
+      } else return uid.sync(18);
+    },
   }));
 
   // Provide the configuration to the view layer because we show it on the homepage
@@ -82,6 +98,17 @@ module.exports = function SampleWebServer(sampleConfig, extraOidcOptions, homePa
       attributes
     });
   });
+
+  app.get('/logout', (req, res) => {
+    console.log(req.query);
+    req.sessionStore.destroy(req.query.sid, (err) => {
+      console.log(
+        '/logout endpoint called to destroy the session with sessionID: ',
+        req.query.sid
+      );
+      res.status(200).end();
+    });
+  })
 
   oidc.on('ready', () => {
     // eslint-disable-next-line no-console
